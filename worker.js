@@ -20,7 +20,6 @@ function getDisplayName(from) {
 async function getGeminiResponse(env, userText) {
   if (!env.GEMINI_API_KEY) return "⚠️ API Key পাওয়া যায়নি।";
 
-  // এখানে মডেলের নাম ঠিক করে gemini-1.5-pro করে দেওয়া হয়েছে
   const API_URL = `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-pro:generateContent?key=${env.GEMINI_API_KEY.trim()}`;
   
   const systemPrompt = `You are a highly intelligent and polite personal AI assistant for Yasin Adnan. Answer clearly in Bengali.`;
@@ -69,18 +68,39 @@ export default {
         const hasMedia = !!(msg.photo || msg.video || msg.document || msg.audio || msg.voice);
         const displayName = getDisplayName(from);
 
-        // OWNER REPLY
-        if (isOwner && msg.reply_to_message) {
-          const repliedId = msg.reply_to_message.message_id;
-          const targetUserId = await env.CONTACT_KV.get(`${CONFIG.KV_TARGET}${repliedId}`);
-          
-          if (!targetUserId) return ctxBot.reply('⚠️ ইউজারের ডেটা পাওয়া যায়নি বা মেসেজটি অনেক পুরোনো।');
-          
-          try {
-            await ctxBot.telegram.copyMessage(targetUserId, chatId, msg.message_id);
-            return ctxBot.reply('✅ রিপ্লাই ইউজারের কাছে পাঠানো হয়েছে।');
-          } catch (err) {
-            return ctxBot.reply('❌ পাঠানো যায়নি। ইউজার হয়তো বট ব্লক করেছেন।');
+        // OWNER SPECIAL COMMANDS & REPLY
+        if (isOwner) {
+          // ম্যাজিক কমান্ড: মডেল লিস্ট বের করার জন্য
+          if (text === '/models') {
+            try {
+              const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models?key=${env.GEMINI_API_KEY.trim()}`);
+              const data = await res.json();
+              if (data.models) {
+                const modelNames = data.models
+                  .map(m => m.name)
+                  .filter(n => n.includes('gemini'))
+                  .join('\n');
+                return ctxBot.reply(`✅ আপনার API Key তে নিচের মডেলগুলো সাপোর্ট করে:\n\n${modelNames}`);
+              } else {
+                return ctxBot.reply(`⚠️ Error fetching models: ${JSON.stringify(data)}`);
+              }
+            } catch (e) {
+              return ctxBot.reply(`⚠️ Fetch Error: ${e.message}`);
+            }
+          }
+
+          if (msg.reply_to_message) {
+            const repliedId = msg.reply_to_message.message_id;
+            const targetUserId = await env.CONTACT_KV.get(`${CONFIG.KV_TARGET}${repliedId}`);
+            
+            if (!targetUserId) return ctxBot.reply('⚠️ ইউজারের ডেটা পাওয়া যায়নি বা মেসেজটি অনেক পুরোনো।');
+            
+            try {
+              await ctxBot.telegram.copyMessage(targetUserId, chatId, msg.message_id);
+              return ctxBot.reply('✅ রিপ্লাই ইউজারের কাছে পাঠানো হয়েছে।');
+            } catch (err) {
+              return ctxBot.reply('❌ পাঠানো যায়নি। ইউজার হয়তো বট ব্লক করেছেন।');
+            }
           }
         }
 
