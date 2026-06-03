@@ -20,8 +20,9 @@ function getDisplayName(from) {
 async function getGeminiResponse(env, userText) {
   if (!env.GEMINI_API_KEY) return "⚠️ API Key পাওয়া যায়নি।";
 
-  // গুগলের শক্তিশালী gemini-2.0-flash মডেল, যেটির ফ্রি লিমিট অনেক ভালো
-  const API_URL = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${env.GEMINI_API_KEY.trim()}`;
+  const apiKey = String(env.GEMINI_API_KEY).trim();
+  // এখানে গুগলের ডিফল্ট ফ্রি মডেল (gemini-flash-latest) সেট করা হয়েছে
+  const API_URL = `https://generativelanguage.googleapis.com/v1beta/models/gemini-flash-latest:generateContent?key=${apiKey}`;
   
   const systemPrompt = `You are a highly intelligent and polite personal AI assistant for Yasin Adnan. Answer clearly and concisely in Bengali.`;
 
@@ -55,11 +56,12 @@ async function getGeminiResponse(env, userText) {
 
 export default {
   async fetch(request, env, ctx) {
-    if (request.method !== 'POST') return new Response('🤖 Yasin AI & Contact Bot is Running!', { status: 200 });
+    if (request.method !== 'POST') return new Response('🤖 Yasin AI Bot is Running!', { status: 200 });
 
     try {
-      const bot = new Telegraf(env.BOT_TOKEN);
-      const OWNER_ID = String(env.OWNER_ID);
+      const botToken = String(env.BOT_TOKEN).trim();
+      const bot = new Telegraf(botToken);
+      const OWNER_ID = String(env.OWNER_ID).trim();
 
       bot.on('message', async (ctxBot) => {
         const msg = ctxBot.message;
@@ -75,7 +77,7 @@ export default {
         const displayName = getDisplayName(from);
 
         // ==========================================
-        // ১. ওনার যখন ইউজারকে রিপ্লাই দিবে (Owner Reply)
+        // ১. ওনার যখন ইউজারকে রিপ্লাই দিবে
         // ==========================================
         if (isOwner && msg.reply_to_message) {
           const repliedId = msg.reply_to_message.message_id;
@@ -130,7 +132,7 @@ export default {
         const currentMode = await env.CONTACT_KV.get(`${CONFIG.KV_STATE}${chatId}`) || 'ai';
         await ctxBot.sendChatAction('typing');
 
-        // --- AI মোড (ওনারের মেসেজ সরাসরি AI তে যাবে) ---
+        // --- AI মোড ---
         if (currentMode === 'ai' || isOwner) {
           if (hasMedia) return ctxBot.reply('আমি বর্তমানে শুধু টেক্সট পড়তে পারি। ছবি বা ফাইল পাঠাতে চাইলে "📞 Contact Mode" ব্যবহার করুন।');
           
@@ -138,7 +140,7 @@ export default {
           return ctxBot.reply(aiResponse);
         }
 
-        // --- Contact মোড (শুধুমাত্র ইউজারদের জন্য) ---
+        // --- Contact মোড ---
         if (currentMode === 'contact') {
           const lastMsgStr = await env.CONTACT_KV.get(`${CONFIG.KV_LAST_MSG}${chatId}`);
           if (lastMsgStr) {
@@ -157,7 +159,6 @@ export default {
             ownerAlertMsg = await ctxBot.telegram.sendMessage(OWNER_ID, ownerAlertText, { parse_mode: 'HTML' });
           }
 
-          // ওনার যেন রিপ্লাই দিতে পারে, সেজন্য মেসেজ আইডি সেভ করা হলো
           await env.CONTACT_KV.put(`${CONFIG.KV_TARGET}${ownerAlertMsg.message_id}`, chatId, { expirationTtl: CONFIG.EXPIRATION_TTL });
           
           const botReply = await ctxBot.reply('✅ আপনার মেসেজটি সফলভাবে ইয়াসিন ভাইয়ের কাছে পাঠানো হয়েছে।');
