@@ -35,8 +35,8 @@ async function getGeminiResponse(env, chatId, userText, isOwner, userName) {
 
   const apiKey = String(env.GEMINI_API_KEY).trim();
   
-  // এখানে ১৫০০ ফ্রি লিমিট যুক্ত স্ট্যাবল মডেল (gemini-1.5-flash) সেট করা হলো
-  const API_URL = `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${apiKey}`;
+  // এবার একদম ১০০% সঠিক নাম (gemini-flash-latest) বসানো হয়েছে
+  const API_URL = `https://generativelanguage.googleapis.com/v1beta/models/gemini-flash-latest:generateContent?key=${apiKey}`;
 
   const systemPrompt = `You are a highly intelligent and organized AI assistant.
   Profile: ${isOwner ? 'You are talking DIRECTLY to your Owner, Yasin Adnan.' : `You are talking to a User named ${userName}. You are the official assistant of Yasin Adnan.`}
@@ -263,6 +263,7 @@ export default {
       await bot.handleUpdate(update);
       return new Response('OK', { status: 200 });
     } catch (error) {
+      console.error(error);
       return new Response('Error', { status: 500 });
     }
   }
