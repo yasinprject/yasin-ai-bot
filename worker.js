@@ -20,7 +20,8 @@ function getDisplayName(from) {
 async function getGeminiResponse(env, userText) {
   if (!env.GEMINI_API_KEY) return "⚠️ API Key পাওয়া যায়নি।";
 
-  const API_URL = `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${env.GEMINI_API_KEY.trim()}`;
+  // এখানে আপনার জন্য গুগলের লেটেস্ট প্রো মডেল (gemini-1.5-pro-latest) সেট করে দেওয়া হয়েছে
+  const API_URL = `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-pro-latest:generateContent?key=${env.GEMINI_API_KEY.trim()}`;
   
   const systemPrompt = `You are a highly intelligent and polite personal AI assistant for Yasin Adnan. Answer clearly in Bengali.`;
 
@@ -36,9 +37,8 @@ async function getGeminiResponse(env, userText) {
     });
 
     if (!response.ok) {
-      // গুগল ঠিক কী এরর দিচ্ছে, সেটা বট সরাসরি আপনাকে পাঠিয়ে দিবে
       const errText = await response.text();
-      return `⚠️ **Google API Error:**\n\n${errText}\n\n(ভাই, এই মেসেজটির স্ক্রিনশট আমাকে দিন)`;
+      return `⚠️ **Google API Error:**\n\n${errText}`;
     }
     
     const data = await response.json();
@@ -69,6 +69,7 @@ export default {
         const hasMedia = !!(msg.photo || msg.video || msg.document || msg.audio || msg.voice);
         const displayName = getDisplayName(from);
 
+        // OWNER REPLY
         if (isOwner && msg.reply_to_message) {
           const repliedId = msg.reply_to_message.message_id;
           const targetUserId = await env.CONTACT_KV.get(`${CONFIG.KV_TARGET}${repliedId}`);
@@ -83,6 +84,7 @@ export default {
           }
         }
 
+        // COMMANDS
         if (text === '/start' || text === '🔄 Reset Bot') {
           await env.CONTACT_KV.delete(`${CONFIG.KV_STATE}${chatId}`);
           await env.CONTACT_KV.delete(`${CONFIG.KV_LAST_MSG}${chatId}`);
