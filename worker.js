@@ -6,6 +6,7 @@ const CONFIG = {
   KV_TARGET: 'target_',
   KV_MSG_TRACK: 'msg_track_', 
   KV_LAST_MSG: 'last_msg_',   
+  KV_OWNER_TARGET: 'owner_active_target_', // ওনারের ফরোয়ার্ডের জন্য টার্গেট ইউজার
   EXPIRATION_TTL: 7 * 24 * 60 * 60,
 };
 
@@ -20,35 +21,41 @@ function getDisplayName(from) {
   return name || from.username || 'Guest';
 }
 
+// ==========================================
+// স্ক্রিন পুরোপুরি ক্লিয়ার করার জন্য গ্লোবাল মেসেজ ট্র্যাকার
+// ==========================================
 async function trackMessages(env, chatId, newIds) {
   try {
     const key = `${CONFIG.KV_MSG_TRACK}${chatId}`;
     let listStr = await env.CONTACT_KV.get(key);
     let list = listStr ? JSON.parse(listStr) : [];
     list.push(...newIds);
-    if (list.length > 100) list = list.slice(-100);
+    list = [...new Set(list)]; // ডুপ্লিকেট আইডি বাদ দেওয়া
+    if (list.length > 500) list = list.slice(-500); // সর্বোচ্চ ৫০০ মেসেজ ট্র্যাক করবে
     await env.CONTACT_KV.put(key, JSON.stringify(list), { expirationTtl: CONFIG.EXPIRATION_TTL });
   } catch (e) {}
 }
 
+// ==========================================
+// Gemini AI (লাইভ সার্চ + স্মার্ট প্রম্পট)
+// ==========================================
 async function getGeminiResponse(env, chatId, userText, isOwner, userName) {
   if (!env.GEMINI_API_KEY) return "⚠️ API Key not found.";
 
   const apiKey = String(env.GEMINI_API_KEY).trim();
-  const currentTime = new Date().toLocaleString('bn-BD', { timeZone: 'Asia/Dhaka', dateStyle: 'full', timeStyle: 'short' });
+  const currentTime = new Date().toLocaleString('en-US', { timeZone: 'Asia/Dhaka', dateStyle: 'full', timeStyle: 'medium' });
 
-  // লাইভ সার্চ এবং বর্তমান সময়ের জন্য কড়া প্রম্পট
-  const systemPrompt = `You are a highly intelligent AI assistant connected to the live internet.
+  const systemPrompt = `You are a highly intelligent and organized AI assistant connected to the live internet.
   
   CRITICAL RULE: Today is ${currentTime}. The current year is 2026. You MUST provide the absolute latest and most up-to-date information using your Google Search tool whenever asked about current events.
   
   Profile: ${isOwner ? 'You are talking DIRECTLY to your Owner, Yasin Adnan.' : `You are talking to a User named ${userName}. You are the official assistant of Yasin Adnan.`}
   
   RULES:
-  1. DO NOT use repetitive greetings (Do not say Assalamualaikum, Hello, etc. in every message). Start answering directly.
-  2. Answer perfectly in Bengali, but keep names like "Yasin Adnan", "Owner", and "User" in English.
-  3. Organize answers beautifully.
-  4. Use backticks (\`text\`) for important copyable items.`;
+  1. DO NOT use repetitive greetings (Do not say Assalamualaikum, Hello, Hi, etc. in every message). Start answering directly to save time.
+  2. Answer perfectly in Bengali, but ALWAYS keep the specific names "Yasin Adnan", "Owner", and "User" in English.
+  3. Organize your answers beautifully with short paragraphs or bullet points.
+  4. If there is any important text, command, link, or code, ALWAYS put it inside backticks (\`text\`) so it becomes 1-click copyable.`;
 
   let history = [];
   try {
@@ -58,7 +65,6 @@ async function getGeminiResponse(env, chatId, userText, isOwner, userName) {
 
   history.push({ role: "user", parts: [{ text: userText }] });
 
-  // লাইভ ইন্টারনেট সার্চ (Google Search Grounding) এনাবল করা হলো
   const requestBody = JSON.stringify({
     systemInstruction: { parts: [{ text: systemPrompt }] },
     contents: history,
@@ -66,11 +72,10 @@ async function getGeminiResponse(env, chatId, userText, isOwner, userName) {
     generationConfig: { temperature: 0.7 }
   });
 
-  // আপনার API Key এর লিস্ট অনুযায়ী অটো-পাইলট মডেল
   const modelsToTry = [
     'gemini-flash-latest',
     'gemini-2.0-flash-lite',
-    'gemini-2.5-flash-lite',
+    'gemini-1.5-flash',
     'gemini-2.0-flash'
   ];
 
@@ -96,9 +101,8 @@ async function getGeminiResponse(env, chatId, userText, isOwner, userName) {
           return aiReply;
         }
       } else {
-        const errText = await response.text();
-        lastError = errText;
-        continue; // কাজ না করলে পরের ফ্রি মডেলে জাম্প করবে
+        lastError = await response.text();
+        continue; 
       }
     } catch (error) {
       lastError = error.message;
@@ -126,29 +130,58 @@ export default {
         if (chat.type !== 'private') return;
 
         const chatId = String(chat.id);
+        const msgId = msg.message_id;
         const text = msg.text || '';
         const isOwner = (chatId === OWNER_ID);
         const hasMedia = !!(msg.photo || msg.video || msg.document || msg.audio || msg.voice || msg.sticker || msg.animation);
         const displayName = getDisplayName(from);
 
-        if (isOwner && msg.reply_to_message) {
-          const repliedId = msg.reply_to_message.message_id;
-          const targetUserId = await env.CONTACT_KV.get(`${CONFIG.KV_TARGET}${repliedId}`);
+        // স্ক্রিনে আসা প্রতিটি মেসেজ ট্র্যাক করা
+        await trackMessages(env, chatId, [msgId]);
 
-          if (!targetUserId) return ctxBot.reply('⚠️ User data not found.', MAIN_MENU);
+        // ==========================================
+        // ১. Owner Forward & Reply Logic
+        // ==========================================
+        if (isOwner) {
+          let targetUserId = null;
+          const isReply = !!msg.reply_to_message;
+          // মেসেজটি কি অন্য কোথাও থেকে ফরোয়ার্ড করা হয়েছে?
+          const isForward = !!(msg.forward_origin || msg.forward_date || msg.forward_from || msg.forward_from_chat);
 
-          try {
-            await ctxBot.telegram.copyMessage(targetUserId, chatId, msg.message_id);
-            const sent = await ctxBot.reply('✅ Reply sent to User successfully.', MAIN_MENU);
-            await trackMessages(env, chatId, [msg.message_id, sent.message_id]);
-            return;
-          } catch (err) {
-            const sent = await ctxBot.reply('❌ Could not send message. User might have blocked the bot.', MAIN_MENU);
-            await trackMessages(env, chatId, [msg.message_id, sent.message_id]);
-            return;
+          if (isReply) {
+            const repliedId = msg.reply_to_message.message_id;
+            targetUserId = await env.CONTACT_KV.get(`${CONFIG.KV_TARGET}${repliedId}`);
+            if (targetUserId) {
+              // রিপ্লাই দিলে তাকে টার্গেট হিসেবে সেভ করা
+              await env.CONTACT_KV.put(CONFIG.KV_OWNER_TARGET, targetUserId, { expirationTtl: CONFIG.EXPIRATION_TTL });
+            }
+          } else if (isForward) {
+            // শুধু ফরোয়ার্ড করলে সেভ করা টার্গেটের কাছে পাঠানো
+            targetUserId = await env.CONTACT_KV.get(CONFIG.KV_OWNER_TARGET);
+          }
+
+          if (isReply || isForward) {
+            if (!targetUserId) {
+              const warn = await ctxBot.reply('⚠️ ফরোয়ার্ড করার আগে ইউজারের কোনো মেসেজে একবার Reply করে টার্গেট সেট করুন।', MAIN_MENU);
+              await trackMessages(env, chatId, [warn.message_id]);
+              return;
+            }
+            try {
+              await ctxBot.telegram.copyMessage(targetUserId, chatId, msgId);
+              const sent = await ctxBot.reply('✅ মেসেজটি ইউজারের কাছে পাঠানো হয়েছে।', MAIN_MENU);
+              await trackMessages(env, chatId, [sent.message_id]);
+              return;
+            } catch (err) {
+              const fail = await ctxBot.reply('❌ মেসেজ পাঠানো যায়নি। সম্ভবত User বটটি ব্লক করেছেন।', MAIN_MENU);
+              await trackMessages(env, chatId, [fail.message_id]);
+              return;
+            }
           }
         }
 
+        // ==========================================
+        // ২. Powerful Reset (Clear Screen)
+        // ==========================================
         if (text === '🔄 Reset Bot') {
           await ctxBot.sendChatAction('typing');
           
@@ -159,9 +192,18 @@ export default {
             if (listStr) msgIds = JSON.parse(listStr);
           } catch (e) {}
 
-          msgIds.push(msg.message_id);
-          for (const id of msgIds) {
-            try { await ctxBot.telegram.deleteMessage(chatId, id); } catch (e) {}
+          // Bulk Delete (একসাথে ১০০ মেসেজ ডিলিট)
+          if (msgIds.length > 0) {
+            for (let i = 0; i < msgIds.length; i += 100) {
+              const chunk = msgIds.slice(i, i + 100);
+              try {
+                await ctxBot.telegram.deleteMessages(chatId, chunk);
+              } catch (e) {
+                for (const id of chunk) {
+                  try { await ctxBot.telegram.deleteMessage(chatId, id); } catch (err) {}
+                }
+              }
+            }
           }
 
           await env.CONTACT_KV.delete(`${CONFIG.KV_STATE}${chatId}`);
@@ -170,59 +212,66 @@ export default {
           await env.CONTACT_KV.delete(trackKey);
 
           const welcomeMsg = isOwner
-            ? `Hello **Owner** (Yasin Adnan)! 👋\n\nScreen cleared. Your Owner panel is fully active.`
-            : `Hello **${displayName}**! 👋\n\nScreen cleared. I am the official bot of Yasin Adnan.\nPlease select a mode below:`;
+            ? `Hello **Owner** (Yasin Adnan)! 👋\n\nScreen completely cleared. Your Owner panel is active.`
+            : `Hello **User** (${displayName})! 👋\n\nScreen completely cleared. I am the official bot of Yasin Adnan.\nPlease select a mode below:`;
 
-          const sent = await ctxBot.reply(welcomeMsg, { parse_mode: 'HTML', ...MAIN_MENU });
+          const sent = await ctxBot.reply(welcomeMsg, { parse_mode: 'Markdown', ...MAIN_MENU });
           await trackMessages(env, chatId, [sent.message_id]);
           return;
         }
 
+        // ==========================================
+        // ৩. Commands
+        // ==========================================
         if (text === '/start') {
           await env.CONTACT_KV.delete(`${CONFIG.KV_STATE}${chatId}`);
           await env.CONTACT_KV.delete(`${CONFIG.KV_HISTORY}${chatId}`);
           
           const welcomeMsg = isOwner
             ? `Hello **Owner** (Yasin Adnan)! 👋\n\nYour Owner panel is active.`
-            : `Hello **${displayName}**! 👋\n\nI am the official bot of Yasin Adnan.\nPlease select a mode below:`;
+            : `Hello **User** (${displayName})! 👋\n\nI am the official bot of Yasin Adnan.\nPlease select a mode below:`;
 
-          const sent = await ctxBot.reply(welcomeMsg, { parse_mode: 'HTML', ...MAIN_MENU });
-          await trackMessages(env, chatId, [msg.message_id, sent.message_id]);
+          const sent = await ctxBot.reply(welcomeMsg, { parse_mode: 'Markdown', ...MAIN_MENU });
+          await trackMessages(env, chatId, [sent.message_id]);
           return;
         }
 
         if (text === 'ℹ️ About') {
           const sent = await ctxBot.reply('🤖 This is the personal AI & Contact Bot of Yasin Adnan.', MAIN_MENU);
-          await trackMessages(env, chatId, [msg.message_id, sent.message_id]);
+          await trackMessages(env, chatId, [sent.message_id]);
           return;
         }
 
         if (text === '🤖 AI Mode') {
           await env.CONTACT_KV.put(`${CONFIG.KV_STATE}${chatId}`, 'ai');
           const sent = await ctxBot.reply('🤖 **AI Mode Active!**\nAsk me anything you want.', { parse_mode: 'Markdown', ...MAIN_MENU });
-          await trackMessages(env, chatId, [msg.message_id, sent.message_id]);
+          await trackMessages(env, chatId, [sent.message_id]);
           return;
         }
 
         if (text === '📞 Contact Mode') {
           if (isOwner) {
             const sent = await ctxBot.reply('💡 You are the Owner! No need to forward messages. You can use AI directly.', MAIN_MENU);
-            await trackMessages(env, chatId, [msg.message_id, sent.message_id]);
+            await trackMessages(env, chatId, [sent.message_id]);
             return;
           }
           await env.CONTACT_KV.put(`${CONFIG.KV_STATE}${chatId}`, 'contact');
           const sent = await ctxBot.reply('📞 **Contact Mode Active!**\n\nWhatever you send here will be directly forwarded to Yasin Adnan.', { parse_mode: 'Markdown', ...MAIN_MENU });
-          await trackMessages(env, chatId, [msg.message_id, sent.message_id]);
+          await trackMessages(env, chatId, [sent.message_id]);
           return;
         }
 
+        // ==========================================
+        // ৪. Message Processing
+        // ==========================================
         const currentMode = await env.CONTACT_KV.get(`${CONFIG.KV_STATE}${chatId}`) || 'ai';
         await ctxBot.sendChatAction('typing');
 
+        // --- AI Mode ---
         if (currentMode === 'ai' || isOwner) {
           if (hasMedia && !text) {
              const sent = await ctxBot.reply('আমি শুধু টেক্সট পড়তে পারি। ছবি বা ফাইল পাঠাতে "📞 Contact Mode" ব্যবহার করুন।', MAIN_MENU);
-             await trackMessages(env, chatId, [msg.message_id, sent.message_id]);
+             await trackMessages(env, chatId, [sent.message_id]);
              return;
           }
 
@@ -233,10 +282,11 @@ export default {
           } catch (e) {
             sentBotMsg = await ctxBot.reply(aiResponse, MAIN_MENU);
           }
-          await trackMessages(env, chatId, [msg.message_id, sentBotMsg.message_id]);
+          await trackMessages(env, chatId, [sentBotMsg.message_id]);
           return;
         }
 
+        // --- Contact Mode ---
         if (currentMode === 'contact') {
           const lastMsgStr = await env.CONTACT_KV.get(`${CONFIG.KV_LAST_MSG}${chatId}`);
           if (lastMsgStr) {
@@ -249,7 +299,7 @@ export default {
 
           const ownerAlertText = `📩 <b>Message from User:</b> ${displayName}`;
           const alertMsg = await ctxBot.telegram.sendMessage(OWNER_ID, ownerAlertText, { parse_mode: 'HTML' });
-          const fwdMsg = await ctxBot.telegram.forwardMessage(OWNER_ID, chatId, msg.message_id);
+          const fwdMsg = await ctxBot.telegram.forwardMessage(OWNER_ID, chatId, msgId);
 
           await env.CONTACT_KV.put(`${CONFIG.KV_TARGET}${fwdMsg.message_id}`, chatId, { expirationTtl: CONFIG.EXPIRATION_TTL });
           await env.CONTACT_KV.put(`${CONFIG.KV_TARGET}${alertMsg.message_id}`, chatId, { expirationTtl: CONFIG.EXPIRATION_TTL });
@@ -257,11 +307,11 @@ export default {
           const botReply = await ctxBot.reply('✅ Message sent to Yasin Adnan successfully.', MAIN_MENU);
           
           await env.CONTACT_KV.put(`${CONFIG.KV_LAST_MSG}${chatId}`, JSON.stringify({
-            userMsgId: msg.message_id,
+            userMsgId: msgId,
             botReplyId: botReply.message_id
           }));
           
-          await trackMessages(env, chatId, [msg.message_id, botReply.message_id]);
+          await trackMessages(env, chatId, [botReply.message_id]);
         }
       });
 
