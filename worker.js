@@ -9,7 +9,6 @@ const CONFIG = {
   EXPIRATION_TTL: 7 * 24 * 60 * 60,
 };
 
-// স্থায়ী মেইন মেনু
 const MAIN_MENU = Markup.keyboard([
   ['🤖 AI Mode', '📞 Contact Mode'],
   ['🔄 Reset Bot', 'ℹ️ About']
@@ -20,7 +19,6 @@ function getDisplayName(from) {
   return [from.first_name, from.last_name].filter(Boolean).join(' ').trim() || from.username || 'User';
 }
 
-// স্ক্রিন ক্লিয়ার করার জন্য মেসেজ ট্র্যাকার
 async function trackMessages(env, chatId, newIds) {
   try {
     const key = `${CONFIG.KV_MSG_TRACK}${chatId}`;
@@ -32,21 +30,24 @@ async function trackMessages(env, chatId, newIds) {
   } catch (e) {}
 }
 
-// ==========================================
-// AUTO-PILOT AI INTEGRATION (The Ultimate Fix)
-// ==========================================
 async function getGeminiResponse(env, chatId, userText, isOwner, userName) {
   if (!env.GEMINI_API_KEY) return "⚠️ API Key not found.";
 
   const apiKey = String(env.GEMINI_API_KEY).trim();
   
-  // কড়া নির্দেশ (অপ্রয়োজনীয় কথা বলবে না, সাজিয়ে উত্তর দিবে)
+  // বর্তমান বাংলাদেশ সময় এবং সাল বের করা
+  const currentTime = new Date().toLocaleString('en-US', { timeZone: 'Asia/Dhaka', dateStyle: 'full', timeStyle: 'medium' });
+
+  // এআইকে কড়া নির্দেশ দেওয়া যে এখন ২০২৬ সাল
   const systemPrompt = `You are a highly intelligent and organized AI assistant.
+  
+  CRITICAL REALITY CHECK: Today's exact date and time in Bangladesh is ${currentTime}. The current year is 2026. You MUST acknowledge that it is currently 2026. DO NOT refer to 2024, 2025, or 2026 as the future.
+  
   Profile: ${isOwner ? 'You are talking DIRECTLY to your Owner, Yasin Adnan.' : `You are talking to a User named ${userName}. You are the official assistant of Yasin Adnan.`}
   
   CRITICAL RULES:
   1. DO NOT use any greetings (Do not say Hello, Hi, Assalamualaikum, etc.). Start answering directly to save time.
-  2. Answer in Bengali, but always keep the names "Yasin Adnan", "Owner", and "User" in English.
+  2. Answer perfectly in Bengali, but always keep the names "Yasin Adnan", "Owner", and "User" in English.
   3. Organize your answers beautifully with short paragraphs or bullet points if needed.
   4. If there is any important text, command, link, or code, ALWAYS put it inside backticks (\`text\`) so it becomes 1-click copyable.`;
 
@@ -64,7 +65,6 @@ async function getGeminiResponse(env, chatId, userText, isOwner, userName) {
     generationConfig: { temperature: 0.7 }
   });
 
-  // অটো-মডেল ফাইন্ডার (Lite মডেলগুলোতে ফ্রি লিমিট সবচেয়ে বেশি থাকে)
   const modelsToTry = [
     'gemini-flash-lite-latest',
     'gemini-2.0-flash-lite',
@@ -76,7 +76,6 @@ async function getGeminiResponse(env, chatId, userText, isOwner, userName) {
 
   let lastError = "";
 
-  // যে মডেলটি কাজ করবে, বট সেটা দিয়েই উত্তর দিবে
   for (const model of modelsToTry) {
     const API_URL = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`;
     try {
@@ -97,9 +96,8 @@ async function getGeminiResponse(env, chatId, userText, isOwner, userName) {
           return aiReply;
         }
       } else {
-        const errText = await response.text();
-        lastError = errText;
-        continue; // কাজ না করলে পরের মডেলে যাবে
+        lastError = await response.text();
+        continue; 
       }
     } catch (error) {
       lastError = error.message;
@@ -107,7 +105,6 @@ async function getGeminiResponse(env, chatId, userText, isOwner, userName) {
     }
   }
 
-  // যদি কোনো মডেলই কাজ না করে (যেটা হওয়ার কথা না)
   return `⚠️ **Google AI Error (All free limits exceeded):**\n\n${lastError}`;
 }
 
@@ -134,7 +131,7 @@ export default {
         const displayName = getDisplayName(from);
 
         // ==========================================
-        // ১. Owner Reply Logic (ফরোয়ার্ড সাপোর্ট সহ)
+        // ১. Owner Reply Logic
         // ==========================================
         if (isOwner && msg.reply_to_message) {
           const repliedId = msg.reply_to_message.message_id;
@@ -155,7 +152,7 @@ export default {
         }
 
         // ==========================================
-        // ২. Powerful Reset (পুরো স্ক্রিন ক্লিয়ার)
+        // ২. Powerful Reset (Clear Screen)
         // ==========================================
         if (text === '🔄 Reset Bot') {
           await ctxBot.sendChatAction('typing');
@@ -233,7 +230,6 @@ export default {
         const currentMode = await env.CONTACT_KV.get(`${CONFIG.KV_STATE}${chatId}`) || 'ai';
         await ctxBot.sendChatAction('typing');
 
-        // --- AI Mode ---
         if (currentMode === 'ai' || isOwner) {
           if (hasMedia && !text) {
              const sent = await ctxBot.reply('আমি শুধু টেক্সট পড়তে পারি। ছবি বা ফাইল পাঠাতে "📞 Contact Mode" ব্যবহার করুন।', MAIN_MENU);
@@ -252,7 +248,6 @@ export default {
           return;
         }
 
-        // --- Contact Mode (অটো-ডিলিট ও ফরোয়ার্ড সহ) ---
         if (currentMode === 'contact') {
           const lastMsgStr = await env.CONTACT_KV.get(`${CONFIG.KV_LAST_MSG}${chatId}`);
           if (lastMsgStr) {
@@ -265,8 +260,6 @@ export default {
 
           const ownerAlertText = `📩 <b>Message from User:</b> ${displayName}`;
           const alertMsg = await ctxBot.telegram.sendMessage(OWNER_ID, ownerAlertText, { parse_mode: 'HTML' });
-          
-          // যেকোনো কিছু ফরোয়ার্ড করার সাপোর্ট
           const fwdMsg = await ctxBot.telegram.forwardMessage(OWNER_ID, chatId, msg.message_id);
 
           await env.CONTACT_KV.put(`${CONFIG.KV_TARGET}${fwdMsg.message_id}`, chatId, { expirationTtl: CONFIG.EXPIRATION_TTL });
@@ -287,6 +280,7 @@ export default {
       await bot.handleUpdate(update);
       return new Response('OK', { status: 200 });
     } catch (error) {
+      console.error(error);
       return new Response('Error', { status: 500 });
     }
   }
