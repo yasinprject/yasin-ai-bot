@@ -4,12 +4,11 @@ const CONFIG = {
   KV_STATE: 'state_',
   KV_HISTORY: 'history_',
   KV_TARGET: 'target_',
-  KV_MSG_TRACK: 'msg_track_', // স্ক্রিন ক্লিয়ার করার জন্য ট্র্যাকার
-  KV_LAST_MSG: 'last_msg_',   // অটো ডিলিটের জন্য ট্র্যাকার
+  KV_MSG_TRACK: 'msg_track_', 
+  KV_LAST_MSG: 'last_msg_',   
   EXPIRATION_TTL: 7 * 24 * 60 * 60,
 };
 
-// স্থায়ী মেইন মেনু
 const MAIN_MENU = Markup.keyboard([
   ['🤖 AI Mode', '📞 Contact Mode'],
   ['🔄 Reset Bot', 'ℹ️ About']
@@ -20,9 +19,6 @@ function getDisplayName(from) {
   return [from.first_name, from.last_name].filter(Boolean).join(' ').trim() || from.username || 'User';
 }
 
-// ==========================================
-// স্ক্রিন ক্লিয়ার করার জন্য মেসেজ ট্র্যাকার
-// ==========================================
 async function trackMessages(env, chatId, newIds) {
   try {
     const key = `${CONFIG.KV_MSG_TRACK}${chatId}`;
@@ -34,24 +30,22 @@ async function trackMessages(env, chatId, newIds) {
   } catch (e) {}
 }
 
-// ==========================================
-// Gemini AI ইন্টিগ্রেশন
-// ==========================================
 async function getGeminiResponse(env, chatId, userText, isOwner, userName) {
   if (!env.GEMINI_API_KEY) return "⚠️ API Key not found.";
 
   const apiKey = String(env.GEMINI_API_KEY).trim();
-  const API_URL = `https://generativelanguage.googleapis.com/v1beta/models/gemini-flash-latest:generateContent?key=${apiKey}`;
+  
+  // এখানে ১৫০০ ফ্রি লিমিট যুক্ত স্ট্যাবল মডেল (gemini-1.5-flash) সেট করা হলো
+  const API_URL = `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${apiKey}`;
 
-  // কড়া নির্দেশ (System Prompt)
   const systemPrompt = `You are a highly intelligent and organized AI assistant.
   Profile: ${isOwner ? 'You are talking DIRECTLY to your Owner, Yasin Adnan.' : `You are talking to a User named ${userName}. You are the official assistant of Yasin Adnan.`}
   
   CRITICAL RULES:
-  1. DO NOT use any greetings (Do not say Hello, Hi, Assalamualaikum, etc.). Start answering directly.
+  1. DO NOT use any greetings (Do not say Hello, Hi, Assalamualaikum, etc.). Start answering directly to save time.
   2. Answer in Bengali, but always keep the names "Yasin Adnan", "Owner", and "User" in English.
-  3. Organize your answers beautifully with bullet points if needed.
-  4. If there is any important text, command, or code, put it inside backticks (\`text\`) so it can be copied with 1-click.`;
+  3. Organize your answers beautifully with short paragraphs or bullet points if needed.
+  4. If there is any important text, command, or code, ALWAYS put it inside backticks (\`text\`) so it becomes 1-click copyable.`;
 
   let history = [];
   try {
@@ -72,7 +66,15 @@ async function getGeminiResponse(env, chatId, userText, isOwner, userName) {
       })
     });
 
-    if (!response.ok) return `⚠️ **AI Error:** ${await response.text()}`;
+    if (!response.ok) {
+        const errText = await response.text();
+        try {
+            const errJson = JSON.parse(errText);
+            return `⚠️ **Google AI Error:** ${errJson.error.message}`;
+        } catch(e) {
+            return `⚠️ **AI Error:** ${errText}`;
+        }
+    }
 
     const data = await response.json();
     const aiReply = data?.candidates?.[0]?.content?.parts?.[0]?.text || "⚠️ বুঝতে পারিনি।";
@@ -230,7 +232,6 @@ export default {
 
         // --- Contact Mode (For Users) ---
         if (currentMode === 'contact') {
-          // আগের মেসেজ অটো-ডিলিট করা (যেন স্ক্রিন ক্লিন থাকে)
           const lastMsgStr = await env.CONTACT_KV.get(`${CONFIG.KV_LAST_MSG}${chatId}`);
           if (lastMsgStr) {
             try {
@@ -240,7 +241,6 @@ export default {
             } catch (err) {}
           }
 
-          // যেকোনো ফরোয়ার্ড বা মিডিয়া মেসেজ নিখুঁতভাবে সেন্ড করা
           const ownerAlertText = `📩 <b>Message from User:</b> ${displayName}`;
           const alertMsg = await ctxBot.telegram.sendMessage(OWNER_ID, ownerAlertText, { parse_mode: 'HTML' });
           const fwdMsg = await ctxBot.telegram.forwardMessage(OWNER_ID, chatId, msg.message_id);
@@ -263,7 +263,6 @@ export default {
       await bot.handleUpdate(update);
       return new Response('OK', { status: 200 });
     } catch (error) {
-      console.error(error);
       return new Response('Error', { status: 500 });
     }
   }
