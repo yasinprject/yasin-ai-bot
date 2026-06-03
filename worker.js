@@ -15,8 +15,9 @@ const MAIN_MENU = Markup.keyboard([
 ]).resize();
 
 function getDisplayName(from) {
-  if (!from) return 'Unknown User';
-  return [from.first_name, from.last_name].filter(Boolean).join(' ').trim() || from.username || 'User';
+  if (!from) return 'Guest';
+  const name = [from.first_name, from.last_name].filter(Boolean).join(' ').trim();
+  return name || from.username || 'Guest';
 }
 
 async function trackMessages(env, chatId, newIds) {
@@ -34,22 +35,24 @@ async function getGeminiResponse(env, chatId, userText, isOwner, userName) {
   if (!env.GEMINI_API_KEY) return "⚠️ API Key not found.";
 
   const apiKey = String(env.GEMINI_API_KEY).trim();
-  
-  // বর্তমান বাংলাদেশ সময় এবং সাল বের করা
-  const currentTime = new Date().toLocaleString('en-US', { timeZone: 'Asia/Dhaka', dateStyle: 'full', timeStyle: 'medium' });
+  const API_URL = `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${apiKey}`;
 
-  // এআইকে কড়া নির্দেশ দেওয়া যে এখন ২০২৬ সাল
-  const systemPrompt = `You are a highly intelligent and organized AI assistant.
+  const currentTime = new Date().toLocaleString('bn-BD', { timeZone: 'Asia/Dhaka', dateStyle: 'full', timeStyle: 'short' });
+
+  // ==============================================================
+  // সিস্টেম প্রম্পট (লাইভ আপডেটের জন্য নির্দেশ)
+  // ==============================================================
+  const systemPrompt = `You are a highly intelligent AI assistant connected to the live internet.
   
-  CRITICAL REALITY CHECK: Today's exact date and time in Bangladesh is ${currentTime}. The current year is 2026. You MUST acknowledge that it is currently 2026. DO NOT refer to 2024, 2025, or 2026 as the future.
+  CRITICAL RULE: Today is ${currentTime}. The current year is 2026. You MUST provide the absolute latest and most up-to-date information by using your Google Search tool whenever asked about current events, politics, or recent updates.
   
   Profile: ${isOwner ? 'You are talking DIRECTLY to your Owner, Yasin Adnan.' : `You are talking to a User named ${userName}. You are the official assistant of Yasin Adnan.`}
   
-  CRITICAL RULES:
-  1. DO NOT use any greetings (Do not say Hello, Hi, Assalamualaikum, etc.). Start answering directly to save time.
-  2. Answer perfectly in Bengali, but always keep the names "Yasin Adnan", "Owner", and "User" in English.
-  3. Organize your answers beautifully with short paragraphs or bullet points if needed.
-  4. If there is any important text, command, link, or code, ALWAYS put it inside backticks (\`text\`) so it becomes 1-click copyable.`;
+  RULES:
+  1. DO NOT use repetitive greetings (Do not say Assalamualaikum, Hello, etc. in every message). Start answering directly.
+  2. Answer perfectly in Bengali, but keep names like "Yasin Adnan", "Owner", and "User" in English.
+  3. Organize answers beautifully.
+  4. Use backticks (\`text\`) for important copyable items.`;
 
   let history = [];
   try {
@@ -59,53 +62,42 @@ async function getGeminiResponse(env, chatId, userText, isOwner, userName) {
 
   history.push({ role: "user", parts: [{ text: userText }] });
 
-  const requestBody = JSON.stringify({
-    systemInstruction: { parts: [{ text: systemPrompt }] },
-    contents: history,
-    generationConfig: { temperature: 0.7 }
-  });
+  try {
+    const response = await fetch(API_URL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        systemInstruction: { parts: [{ text: systemPrompt }] },
+        contents: history,
+        // ==========================================
+        // ম্যাজিক: গুগল লাইভ সার্চ টুল এনাবল করা হলো
+        // ==========================================
+        tools: [{ googleSearch: {} }],
+        generationConfig: { temperature: 0.7 }
+      })
+    });
 
-  const modelsToTry = [
-    'gemini-flash-lite-latest',
-    'gemini-2.0-flash-lite',
-    'gemini-2.5-flash-lite',
-    'gemini-2.0-flash',
-    'gemini-2.5-flash',
-    'gemini-flash-latest'
-  ];
-
-  let lastError = "";
-
-  for (const model of modelsToTry) {
-    const API_URL = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`;
-    try {
-      const response = await fetch(API_URL, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: requestBody
-      });
-
-      if (response.ok) {
-        const data = await response.json();
-        const aiReply = data?.candidates?.[0]?.content?.parts?.[0]?.text;
-        
-        if (aiReply) {
-          history.push({ role: "model", parts: [{ text: aiReply }] });
-          if (history.length > 20) history = history.slice(-20);
-          await env.CONTACT_KV.put(`${CONFIG.KV_HISTORY}${chatId}`, JSON.stringify(history), { expirationTtl: CONFIG.EXPIRATION_TTL });
-          return aiReply;
+    if (!response.ok) {
+        const errText = await response.text();
+        try {
+            const errJson = JSON.parse(errText);
+            return `⚠️ **Google AI Error:** ${errJson.error.message}`;
+        } catch(e) {
+            return `⚠️ **AI Error:** ${errText}`;
         }
-      } else {
-        lastError = await response.text();
-        continue; 
-      }
-    } catch (error) {
-      lastError = error.message;
-      continue;
     }
-  }
 
-  return `⚠️ **Google AI Error (All free limits exceeded):**\n\n${lastError}`;
+    const data = await response.json();
+    const aiReply = data?.candidates?.[0]?.content?.parts?.[0]?.text || "⚠️ বুঝতে পারিনি।";
+
+    history.push({ role: "model", parts: [{ text: aiReply }] });
+    if (history.length > 20) history = history.slice(-20);
+    await env.CONTACT_KV.put(`${CONFIG.KV_HISTORY}${chatId}`, JSON.stringify(history), { expirationTtl: CONFIG.EXPIRATION_TTL });
+
+    return aiReply;
+  } catch (error) {
+    return `⚠️ System Error: ${error.message}`;
+  }
 }
 
 export default {
@@ -130,9 +122,6 @@ export default {
         const hasMedia = !!(msg.photo || msg.video || msg.document || msg.audio || msg.voice || msg.sticker || msg.animation);
         const displayName = getDisplayName(from);
 
-        // ==========================================
-        // ১. Owner Reply Logic
-        // ==========================================
         if (isOwner && msg.reply_to_message) {
           const repliedId = msg.reply_to_message.message_id;
           const targetUserId = await env.CONTACT_KV.get(`${CONFIG.KV_TARGET}${repliedId}`);
@@ -151,9 +140,6 @@ export default {
           }
         }
 
-        // ==========================================
-        // ২. Powerful Reset (Clear Screen)
-        // ==========================================
         if (text === '🔄 Reset Bot') {
           await ctxBot.sendChatAction('typing');
           
@@ -176,23 +162,20 @@ export default {
 
           const welcomeMsg = isOwner
             ? `Hello **Owner** (Yasin Adnan)! 👋\n\nScreen cleared. Your Owner panel is fully active.`
-            : `Hello **User** (${displayName})! 👋\n\nScreen cleared. I am the official bot of Yasin Adnan.\nPlease select a mode below:`;
+            : `Hello **${displayName}**! 👋\n\nScreen cleared. I am the official bot of Yasin Adnan.\nPlease select a mode below:`;
 
           const sent = await ctxBot.reply(welcomeMsg, { parse_mode: 'HTML', ...MAIN_MENU });
           await trackMessages(env, chatId, [sent.message_id]);
           return;
         }
 
-        // ==========================================
-        // ৩. Commands
-        // ==========================================
         if (text === '/start') {
           await env.CONTACT_KV.delete(`${CONFIG.KV_STATE}${chatId}`);
           await env.CONTACT_KV.delete(`${CONFIG.KV_HISTORY}${chatId}`);
           
           const welcomeMsg = isOwner
             ? `Hello **Owner** (Yasin Adnan)! 👋\n\nYour Owner panel is active.`
-            : `Hello **User** (${displayName})! 👋\n\nI am the official bot of Yasin Adnan.\nPlease select a mode below:`;
+            : `Hello **${displayName}**! 👋\n\nI am the official bot of Yasin Adnan.\nPlease select a mode below:`;
 
           const sent = await ctxBot.reply(welcomeMsg, { parse_mode: 'HTML', ...MAIN_MENU });
           await trackMessages(env, chatId, [msg.message_id, sent.message_id]);
@@ -224,9 +207,6 @@ export default {
           return;
         }
 
-        // ==========================================
-        // ৪. Message Processing
-        // ==========================================
         const currentMode = await env.CONTACT_KV.get(`${CONFIG.KV_STATE}${chatId}`) || 'ai';
         await ctxBot.sendChatAction('typing');
 
