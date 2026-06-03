@@ -20,7 +20,8 @@ function getDisplayName(from) {
 async function getGeminiResponse(env, userText) {
   if (!env.GEMINI_API_KEY) return "⚠️ API Key পাওয়া যায়নি।";
 
-  const API_URL = `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-pro:generateContent?key=${env.GEMINI_API_KEY.trim()}`;
+  // গুগলের সবচেয়ে পাওয়ারফুল লেটেস্ট প্রো মডেল সেট করা হয়েছে
+  const API_URL = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-pro:generateContent?key=${env.GEMINI_API_KEY.trim()}`;
   
   const systemPrompt = `You are a highly intelligent and polite personal AI assistant for Yasin Adnan. Answer clearly in Bengali.`;
 
@@ -68,51 +69,36 @@ export default {
         const hasMedia = !!(msg.photo || msg.video || msg.document || msg.audio || msg.voice);
         const displayName = getDisplayName(from);
 
-        // OWNER SPECIAL COMMANDS & REPLY
-        if (isOwner) {
-          // ম্যাজিক কমান্ড: মডেল লিস্ট বের করার জন্য
-          if (text === '/models') {
-            try {
-              const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models?key=${env.GEMINI_API_KEY.trim()}`);
-              const data = await res.json();
-              if (data.models) {
-                const modelNames = data.models
-                  .map(m => m.name)
-                  .filter(n => n.includes('gemini'))
-                  .join('\n');
-                return ctxBot.reply(`✅ আপনার API Key তে নিচের মডেলগুলো সাপোর্ট করে:\n\n${modelNames}`);
-              } else {
-                return ctxBot.reply(`⚠️ Error fetching models: ${JSON.stringify(data)}`);
-              }
-            } catch (e) {
-              return ctxBot.reply(`⚠️ Fetch Error: ${e.message}`);
-            }
-          }
-
-          if (msg.reply_to_message) {
-            const repliedId = msg.reply_to_message.message_id;
-            const targetUserId = await env.CONTACT_KV.get(`${CONFIG.KV_TARGET}${repliedId}`);
-            
-            if (!targetUserId) return ctxBot.reply('⚠️ ইউজারের ডেটা পাওয়া যায়নি বা মেসেজটি অনেক পুরোনো।');
-            
-            try {
-              await ctxBot.telegram.copyMessage(targetUserId, chatId, msg.message_id);
-              return ctxBot.reply('✅ রিপ্লাই ইউজারের কাছে পাঠানো হয়েছে।');
-            } catch (err) {
-              return ctxBot.reply('❌ পাঠানো যায়নি। ইউজার হয়তো বট ব্লক করেছেন।');
-            }
+        // ==========================================
+        // [A] OWNER SPECIAL LOGIC
+        // ==========================================
+        if (isOwner && msg.reply_to_message) {
+          const repliedId = msg.reply_to_message.message_id;
+          const targetUserId = await env.CONTACT_KV.get(`${CONFIG.KV_TARGET}${repliedId}`);
+          
+          if (!targetUserId) return ctxBot.reply('⚠️ ইউজারের ডেটা পাওয়া যায়নি বা মেসেজটি অনেক পুরোনো।');
+          
+          try {
+            await ctxBot.telegram.copyMessage(targetUserId, chatId, msg.message_id);
+            return ctxBot.reply('✅ রিপ্লাই ইউজারের কাছে পাঠানো হয়েছে।');
+          } catch (err) {
+            return ctxBot.reply('❌ পাঠানো যায়নি। ইউজার হয়তো বট ব্লক করেছেন।');
           }
         }
 
-        // COMMANDS
+        // ==========================================
+        // [B] COMMANDS & MENU
+        // ==========================================
         if (text === '/start' || text === '🔄 Reset Bot') {
           await env.CONTACT_KV.delete(`${CONFIG.KV_STATE}${chatId}`);
           await env.CONTACT_KV.delete(`${CONFIG.KV_LAST_MSG}${chatId}`);
           
-          return ctxBot.reply(
-            `আসসালামু আলাইকুম <b>${displayName}</b>! 👋\n\nআমি ইয়াসিন আদনানের অফিশিয়াল বট।\nঅনুগ্রহ করে নিচের মেনু থেকে আপনার কাঙ্ক্ষিত মোডটি নির্বাচন করুন:`, 
-            { parse_mode: 'HTML', ...MAIN_MENU }
-          );
+          // ওনার এবং ইউজারের জন্য আলাদা ওয়েলকাম মেসেজ
+          const welcomeMsg = isOwner 
+            ? `আসসালামু আলাইকুম <b>ইয়াসিন ভাই</b>! 👋\n\nআপনার ওনার প্যানেল অ্যাক্টিভ। আপনি চাইলে সরাসরি AI এর সাথে কথা বলতে পারেন, অথবা ইউজারদের মেসেজে Reply দিতে পারেন।`
+            : `আসসালামু আলাইকুম <b>${displayName}</b>! 👋\n\nআমি ইয়াসিন আদনানের অফিশিয়াল বট।\nঅনুগ্রহ করে নিচের মেনু থেকে আপনার কাঙ্ক্ষিত মোডটি নির্বাচন করুন:`;
+
+          return ctxBot.reply(welcomeMsg, { parse_mode: 'HTML', ...MAIN_MENU });
         }
 
         if (text === 'ℹ️ About') return ctxBot.reply('🤖 এটি ইয়াসিন আদনানের পার্সোনাল AI এবং কন্টাক্ট বট।', MAIN_MENU);
@@ -123,21 +109,28 @@ export default {
         }
 
         if (text === '📞 Contact Mode') {
+          if (isOwner) return ctxBot.reply('💡 আপনি নিজেই ওনার! আপনার মেসেজ ফরওয়ার্ড করার প্রয়োজন নেই। আপনি সরাসরি AI ব্যবহার করতে পারেন।');
+          
           await env.CONTACT_KV.put(`${CONFIG.KV_STATE}${chatId}`, 'contact');
           return ctxBot.reply('📞 <b>কন্টাক্ট মোড চালু হয়েছে!</b>\n\nএখানে আপনি যা লিখবেন তা সরাসরি ইয়াসিন ভাইয়ের কাছে চলে যাবে। (আপনার চ্যাট স্ক্রিন পরিষ্কার রাখতে আগের মেসেজ মুছে যাবে)।', { parse_mode: 'HTML', ...MAIN_MENU });
         }
 
+        // ==========================================
+        // [C] MESSAGE PROCESSING
+        // ==========================================
+        
+        // ডিফল্ট এআই মোড
         const currentMode = await env.CONTACT_KV.get(`${CONFIG.KV_STATE}${chatId}`) || 'ai';
         await ctxBot.sendChatAction('typing');
 
-        // AI MODE
-        if (currentMode === 'ai') {
-          if (hasMedia) return ctxBot.reply('আমি বর্তমানে শুধু টেক্সট পড়তে পারি। কোনো ছবি বা ফাইল পাঠাতে চাইলে "📞 Contact Mode" এ গিয়ে ইয়াসিন ভাইকে পাঠান।');
+        // ১. AI MODE (ওনার এবং ইউজার উভয়ের জন্য)
+        if (currentMode === 'ai' || isOwner) {
+          if (hasMedia) return ctxBot.reply('আমি বর্তমানে শুধু টেক্সট পড়তে পারি।');
           const aiResponse = await getGeminiResponse(env, text);
           return ctxBot.reply(aiResponse);
         }
 
-        // CONTACT MODE
+        // ২. CONTACT MODE (শুধু ইউজারদের জন্য)
         if (currentMode === 'contact') {
           const lastMsgStr = await env.CONTACT_KV.get(`${CONFIG.KV_LAST_MSG}${chatId}`);
           if (lastMsgStr) {
