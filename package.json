@@ -1,0 +1,9 @@
+{
+  "name": "yasin-ai-bot",
+  "version": "1.0.0",
+  "main": "worker.js",
+  "type": "module",
+  "dependencies": {
+    "telegraf": "^4.16.3"
+  }
+}
