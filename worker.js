@@ -20,10 +20,10 @@ function getDisplayName(from) {
 async function getGeminiResponse(env, userText) {
   if (!env.GEMINI_API_KEY) return "⚠️ API Key পাওয়া যায়নি।";
 
-  // গুগলের সবচেয়ে পাওয়ারফুল লেটেস্ট প্রো মডেল সেট করা হয়েছে
-  const API_URL = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-pro:generateContent?key=${env.GEMINI_API_KEY.trim()}`;
+  // গুগলের শক্তিশালী gemini-2.0-flash মডেল, যেটির ফ্রি লিমিট অনেক ভালো
+  const API_URL = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${env.GEMINI_API_KEY.trim()}`;
   
-  const systemPrompt = `You are a highly intelligent and polite personal AI assistant for Yasin Adnan. Answer clearly in Bengali.`;
+  const systemPrompt = `You are a highly intelligent and polite personal AI assistant for Yasin Adnan. Answer clearly and concisely in Bengali.`;
 
   try {
     const response = await fetch(API_URL, {
@@ -38,7 +38,12 @@ async function getGeminiResponse(env, userText) {
 
     if (!response.ok) {
       const errText = await response.text();
-      return `⚠️ **Google API Error:**\n\n${errText}`;
+      try {
+          const errJson = JSON.parse(errText);
+          return `⚠️ **Google AI Error:** ${errJson.error.message}`;
+      } catch (e) {
+          return `⚠️ **Google AI Error:**\n\n${errText}`;
+      }
     }
     
     const data = await response.json();
@@ -70,30 +75,31 @@ export default {
         const displayName = getDisplayName(from);
 
         // ==========================================
-        // [A] OWNER SPECIAL LOGIC
+        // ১. ওনার যখন ইউজারকে রিপ্লাই দিবে (Owner Reply)
         // ==========================================
         if (isOwner && msg.reply_to_message) {
           const repliedId = msg.reply_to_message.message_id;
           const targetUserId = await env.CONTACT_KV.get(`${CONFIG.KV_TARGET}${repliedId}`);
           
-          if (!targetUserId) return ctxBot.reply('⚠️ ইউজারের ডেটা পাওয়া যায়নি বা মেসেজটি অনেক পুরোনো।');
+          if (!targetUserId) {
+            return ctxBot.reply('⚠️ ইউজারের ডেটা পাওয়া যায়নি বা মেসেজটি অনেক পুরোনো।');
+          }
           
           try {
             await ctxBot.telegram.copyMessage(targetUserId, chatId, msg.message_id);
-            return ctxBot.reply('✅ রিপ্লাই ইউজারের কাছে পাঠানো হয়েছে।');
+            return ctxBot.reply('✅ আপনার রিপ্লাই ইউজারের কাছে সফলভাবে পৌঁছেছে।');
           } catch (err) {
-            return ctxBot.reply('❌ পাঠানো যায়নি। ইউজার হয়তো বট ব্লক করেছেন।');
+            return ctxBot.reply('❌ মেসেজ পাঠানো যায়নি। সম্ভবত ইউজার বটটি ব্লক করেছেন।');
           }
         }
 
         // ==========================================
-        // [B] COMMANDS & MENU
+        // ২. কমান্ডস এবং মেনু বাটন
         // ==========================================
         if (text === '/start' || text === '🔄 Reset Bot') {
           await env.CONTACT_KV.delete(`${CONFIG.KV_STATE}${chatId}`);
           await env.CONTACT_KV.delete(`${CONFIG.KV_LAST_MSG}${chatId}`);
           
-          // ওনার এবং ইউজারের জন্য আলাদা ওয়েলকাম মেসেজ
           const welcomeMsg = isOwner 
             ? `আসসালামু আলাইকুম <b>ইয়াসিন ভাই</b>! 👋\n\nআপনার ওনার প্যানেল অ্যাক্টিভ। আপনি চাইলে সরাসরি AI এর সাথে কথা বলতে পারেন, অথবা ইউজারদের মেসেজে Reply দিতে পারেন।`
             : `আসসালামু আলাইকুম <b>${displayName}</b>! 👋\n\nআমি ইয়াসিন আদনানের অফিশিয়াল বট।\nঅনুগ্রহ করে নিচের মেনু থেকে আপনার কাঙ্ক্ষিত মোডটি নির্বাচন করুন:`;
@@ -101,7 +107,9 @@ export default {
           return ctxBot.reply(welcomeMsg, { parse_mode: 'HTML', ...MAIN_MENU });
         }
 
-        if (text === 'ℹ️ About') return ctxBot.reply('🤖 এটি ইয়াসিন আদনানের পার্সোনাল AI এবং কন্টাক্ট বট।', MAIN_MENU);
+        if (text === 'ℹ️ About') {
+          return ctxBot.reply('🤖 এটি ইয়াসিন আদনানের পার্সোনাল AI এবং কন্টাক্ট বট।', MAIN_MENU);
+        }
 
         if (text === '🤖 AI Mode') {
           await env.CONTACT_KV.put(`${CONFIG.KV_STATE}${chatId}`, 'ai');
@@ -109,28 +117,28 @@ export default {
         }
 
         if (text === '📞 Contact Mode') {
-          if (isOwner) return ctxBot.reply('💡 আপনি নিজেই ওনার! আপনার মেসেজ ফরওয়ার্ড করার প্রয়োজন নেই। আপনি সরাসরি AI ব্যবহার করতে পারেন।');
-          
+          if (isOwner) {
+            return ctxBot.reply('💡 আপনি নিজেই ওনার! আপনার মেসেজ ফরওয়ার্ড করার প্রয়োজন নেই। আপনি সরাসরি AI ব্যবহার করতে পারেন।');
+          }
           await env.CONTACT_KV.put(`${CONFIG.KV_STATE}${chatId}`, 'contact');
           return ctxBot.reply('📞 <b>কন্টাক্ট মোড চালু হয়েছে!</b>\n\nএখানে আপনি যা লিখবেন তা সরাসরি ইয়াসিন ভাইয়ের কাছে চলে যাবে। (আপনার চ্যাট স্ক্রিন পরিষ্কার রাখতে আগের মেসেজ মুছে যাবে)।', { parse_mode: 'HTML', ...MAIN_MENU });
         }
 
         // ==========================================
-        // [C] MESSAGE PROCESSING
+        // ৩. মেসেজ প্রসেসিং (AI বা Contact)
         // ==========================================
-        
-        // ডিফল্ট এআই মোড
         const currentMode = await env.CONTACT_KV.get(`${CONFIG.KV_STATE}${chatId}`) || 'ai';
         await ctxBot.sendChatAction('typing');
 
-        // ১. AI MODE (ওনার এবং ইউজার উভয়ের জন্য)
+        // --- AI মোড (ওনারের মেসেজ সরাসরি AI তে যাবে) ---
         if (currentMode === 'ai' || isOwner) {
-          if (hasMedia) return ctxBot.reply('আমি বর্তমানে শুধু টেক্সট পড়তে পারি।');
+          if (hasMedia) return ctxBot.reply('আমি বর্তমানে শুধু টেক্সট পড়তে পারি। ছবি বা ফাইল পাঠাতে চাইলে "📞 Contact Mode" ব্যবহার করুন।');
+          
           const aiResponse = await getGeminiResponse(env, text);
           return ctxBot.reply(aiResponse);
         }
 
-        // ২. CONTACT MODE (শুধু ইউজারদের জন্য)
+        // --- Contact মোড (শুধুমাত্র ইউজারদের জন্য) ---
         if (currentMode === 'contact') {
           const lastMsgStr = await env.CONTACT_KV.get(`${CONFIG.KV_LAST_MSG}${chatId}`);
           if (lastMsgStr) {
@@ -145,11 +153,13 @@ export default {
           if (hasMedia) {
             ownerAlertMsg = await ctxBot.telegram.forwardMessage(OWNER_ID, chatId, msg.message_id);
           } else {
-            const ownerAlertText = `📩 <b>নতুন কন্টাক্ট মেসেজ!</b>\n👤 <b>নাম:</b> ${displayName}\n💬 <b>মেসেজ:</b>\n${text}`;
+            const ownerAlertText = `📩 <b>নতুন মেসেজ (Contact Mode)</b>\n👤 <b>নাম:</b> ${displayName}\n💬 <b>মেসেজ:</b>\n${text}`;
             ownerAlertMsg = await ctxBot.telegram.sendMessage(OWNER_ID, ownerAlertText, { parse_mode: 'HTML' });
           }
 
+          // ওনার যেন রিপ্লাই দিতে পারে, সেজন্য মেসেজ আইডি সেভ করা হলো
           await env.CONTACT_KV.put(`${CONFIG.KV_TARGET}${ownerAlertMsg.message_id}`, chatId, { expirationTtl: CONFIG.EXPIRATION_TTL });
+          
           const botReply = await ctxBot.reply('✅ আপনার মেসেজটি সফলভাবে ইয়াসিন ভাইয়ের কাছে পাঠানো হয়েছে।');
 
           await env.CONTACT_KV.put(`${CONFIG.KV_LAST_MSG}${chatId}`, JSON.stringify({
@@ -163,6 +173,7 @@ export default {
       await bot.handleUpdate(update);
       return new Response('OK', { status: 200 });
     } catch (error) {
+      console.error(error);
       return new Response('Error', { status: 500 });
     }
   }
