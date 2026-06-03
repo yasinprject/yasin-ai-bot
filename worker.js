@@ -35,16 +35,12 @@ async function getGeminiResponse(env, chatId, userText, isOwner, userName) {
   if (!env.GEMINI_API_KEY) return "⚠️ API Key not found.";
 
   const apiKey = String(env.GEMINI_API_KEY).trim();
-  const API_URL = `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${apiKey}`;
-
   const currentTime = new Date().toLocaleString('bn-BD', { timeZone: 'Asia/Dhaka', dateStyle: 'full', timeStyle: 'short' });
 
-  // ==============================================================
-  // সিস্টেম প্রম্পট (লাইভ আপডেটের জন্য নির্দেশ)
-  // ==============================================================
+  // লাইভ সার্চ এবং বর্তমান সময়ের জন্য কড়া প্রম্পট
   const systemPrompt = `You are a highly intelligent AI assistant connected to the live internet.
   
-  CRITICAL RULE: Today is ${currentTime}. The current year is 2026. You MUST provide the absolute latest and most up-to-date information by using your Google Search tool whenever asked about current events, politics, or recent updates.
+  CRITICAL RULE: Today is ${currentTime}. The current year is 2026. You MUST provide the absolute latest and most up-to-date information using your Google Search tool whenever asked about current events.
   
   Profile: ${isOwner ? 'You are talking DIRECTLY to your Owner, Yasin Adnan.' : `You are talking to a User named ${userName}. You are the official assistant of Yasin Adnan.`}
   
@@ -62,42 +58,55 @@ async function getGeminiResponse(env, chatId, userText, isOwner, userName) {
 
   history.push({ role: "user", parts: [{ text: userText }] });
 
-  try {
-    const response = await fetch(API_URL, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        systemInstruction: { parts: [{ text: systemPrompt }] },
-        contents: history,
-        // ==========================================
-        // ম্যাজিক: গুগল লাইভ সার্চ টুল এনাবল করা হলো
-        // ==========================================
-        tools: [{ googleSearch: {} }],
-        generationConfig: { temperature: 0.7 }
-      })
-    });
+  // লাইভ ইন্টারনেট সার্চ (Google Search Grounding) এনাবল করা হলো
+  const requestBody = JSON.stringify({
+    systemInstruction: { parts: [{ text: systemPrompt }] },
+    contents: history,
+    tools: [{ googleSearch: {} }],
+    generationConfig: { temperature: 0.7 }
+  });
 
-    if (!response.ok) {
-        const errText = await response.text();
-        try {
-            const errJson = JSON.parse(errText);
-            return `⚠️ **Google AI Error:** ${errJson.error.message}`;
-        } catch(e) {
-            return `⚠️ **AI Error:** ${errText}`;
+  // আপনার API Key এর লিস্ট অনুযায়ী অটো-পাইলট মডেল
+  const modelsToTry = [
+    'gemini-flash-latest',
+    'gemini-2.0-flash-lite',
+    'gemini-2.5-flash-lite',
+    'gemini-2.0-flash'
+  ];
+
+  let lastError = "";
+
+  for (const model of modelsToTry) {
+    const API_URL = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`;
+    try {
+      const response = await fetch(API_URL, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: requestBody
+      });
+
+      if (response.ok) {
+        const data = await response.json();
+        const aiReply = data?.candidates?.[0]?.content?.parts?.[0]?.text;
+        
+        if (aiReply) {
+          history.push({ role: "model", parts: [{ text: aiReply }] });
+          if (history.length > 20) history = history.slice(-20);
+          await env.CONTACT_KV.put(`${CONFIG.KV_HISTORY}${chatId}`, JSON.stringify(history), { expirationTtl: CONFIG.EXPIRATION_TTL });
+          return aiReply;
         }
+      } else {
+        const errText = await response.text();
+        lastError = errText;
+        continue; // কাজ না করলে পরের ফ্রি মডেলে জাম্প করবে
+      }
+    } catch (error) {
+      lastError = error.message;
+      continue;
     }
-
-    const data = await response.json();
-    const aiReply = data?.candidates?.[0]?.content?.parts?.[0]?.text || "⚠️ বুঝতে পারিনি।";
-
-    history.push({ role: "model", parts: [{ text: aiReply }] });
-    if (history.length > 20) history = history.slice(-20);
-    await env.CONTACT_KV.put(`${CONFIG.KV_HISTORY}${chatId}`, JSON.stringify(history), { expirationTtl: CONFIG.EXPIRATION_TTL });
-
-    return aiReply;
-  } catch (error) {
-    return `⚠️ System Error: ${error.message}`;
   }
+
+  return `⚠️ **Google AI Error (All models failed):**\n\n${lastError}`;
 }
 
 export default {
