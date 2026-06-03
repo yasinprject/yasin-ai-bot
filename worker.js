@@ -20,8 +20,8 @@ function getDisplayName(from) {
 async function getGeminiResponse(env, userText) {
   if (!env.GEMINI_API_KEY) return "⚠️ API Key পাওয়া যায়নি।";
 
-  // এখানে আপনার জন্য গুগলের লেটেস্ট প্রো মডেল (gemini-1.5-pro-latest) সেট করে দেওয়া হয়েছে
-  const API_URL = `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-pro-latest:generateContent?key=${env.GEMINI_API_KEY.trim()}`;
+  // এখানে মডেলের নাম ঠিক করে gemini-1.5-pro করে দেওয়া হয়েছে
+  const API_URL = `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-pro:generateContent?key=${env.GEMINI_API_KEY.trim()}`;
   
   const systemPrompt = `You are a highly intelligent and polite personal AI assistant for Yasin Adnan. Answer clearly in Bengali.`;
 
