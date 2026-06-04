@@ -6,7 +6,7 @@ const CONFIG = {
   KV_TARGET: 'target_',
   KV_MSG_TRACK: 'msg_track_', 
   KV_LAST_MSG: 'last_msg_',   
-  KV_OWNER_TARGET: 'owner_target_', // ওনারের ফরোয়ার্ডের জন্য
+  KV_OWNER_TARGET: 'owner_target_', 
   EXPIRATION_TTL: 7 * 24 * 60 * 60,
 };
 
@@ -35,26 +35,22 @@ async function trackMessages(env, chatId, newIds) {
 }
 
 // ==========================================
-// Gemini AI (স্ট্যাবল মডেল + স্মার্ট প্রম্পট)
+// Gemini AI (অটো-পাইলট + লাইভ সার্চ)
 // ==========================================
 async function getGeminiResponse(env, chatId, userText, isOwner, userName) {
   if (!env.GEMINI_API_KEY) return "⚠️ API Key not found.";
 
   const apiKey = String(env.GEMINI_API_KEY).trim();
-  // একদম স্ট্যাবল এবং ফ্রি মডেল
-  const API_URL = `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${apiKey}`;
-
   const currentTime = new Date().toLocaleString('en-US', { timeZone: 'Asia/Dhaka', dateStyle: 'full', timeStyle: 'medium' });
 
-  // বর্তমান পরিস্থিতি ও কড়া নির্দেশ
-  const systemPrompt = `You are a highly intelligent and organized AI assistant.
+  const systemPrompt = `You are a highly intelligent and organized AI assistant connected to the live internet.
   
-  CRITICAL KNOWLEDGE: Today is ${currentTime}. The year is 2026. DO NOT announce the date or time unless asked. In Bangladesh politics: Sheikh Hasina resigned on Aug 5, 2024. Currently, the Interim Government is led by Chief Adviser Dr. Muhammad Yunus. Remember this.
+  CRITICAL KNOWLEDGE: Today is ${currentTime}. The year is 2026. DO NOT announce the date or time unless asked. Use your Google Search tool for current events (e.g., Bangladesh Interim Government led by Dr. Muhammad Yunus).
   
   Profile: ${isOwner ? 'You are talking DIRECTLY to your Owner, Yasin Adnan.' : `You are talking to a User named ${userName}. You are the official assistant of Yasin Adnan.`}
   
   RULES:
-  1. DO NOT use repetitive greetings (Do not say Assalamualaikum, Hello, Hi, etc. in every message). Start answering directly to save time.
+  1. DO NOT use repetitive greetings (Do not say Assalamualaikum, Hello, Hi, etc.). Start answering directly to save time.
   2. Answer perfectly in Bengali, but ALWAYS keep the specific names "Yasin Adnan", "Owner", and "User" in English.
   3. Organize your answers beautifully with short paragraphs or bullet points.
   4. If there is any important text, command, link, or code, ALWAYS put it inside backticks (\`text\`) so it becomes 1-click copyable.`;
@@ -67,38 +63,56 @@ async function getGeminiResponse(env, chatId, userText, isOwner, userName) {
 
   history.push({ role: "user", parts: [{ text: userText }] });
 
-  try {
-    const response = await fetch(API_URL, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        systemInstruction: { parts: [{ text: systemPrompt }] },
-        contents: history,
-        generationConfig: { temperature: 0.7 }
-      })
-    });
+  const requestBody = JSON.stringify({
+    systemInstruction: { parts: [{ text: systemPrompt }] },
+    contents: history,
+    tools: [{ googleSearch: {} }],
+    generationConfig: { temperature: 0.7 }
+  });
 
-    if (!response.ok) {
-        const errText = await response.text();
-        try {
-            const errJson = JSON.parse(errText);
-            return `⚠️ **Google AI Error:** ${errJson.error.message}`;
-        } catch(e) {
-            return `⚠️ **AI Error:** ${errText}`;
+  // ========================================================
+  // অটো-পাইলট লজিক: একটি কাজ না করলে অটোমেটিক পরের মডেলে যাবে
+  // ========================================================
+  const modelsToTry = [
+    'gemini-flash-latest',
+    'gemini-flash-lite-latest',
+    'gemini-2.0-flash-lite',
+    'gemini-2.5-flash-lite',
+    'gemini-2.0-flash'
+  ];
+
+  let lastError = "";
+
+  for (const model of modelsToTry) {
+    const API_URL = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`;
+    try {
+      const response = await fetch(API_URL, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: requestBody
+      });
+
+      if (response.ok) {
+        const data = await response.json();
+        const aiReply = data?.candidates?.[0]?.content?.parts?.[0]?.text;
+        
+        if (aiReply) {
+          history.push({ role: "model", parts: [{ text: aiReply }] });
+          if (history.length > 20) history = history.slice(-20);
+          await env.CONTACT_KV.put(`${CONFIG.KV_HISTORY}${chatId}`, JSON.stringify(history), { expirationTtl: CONFIG.EXPIRATION_TTL });
+          return aiReply;
         }
+      } else {
+        lastError = await response.text();
+        continue; // মডেল কাজ না করলে (Error 404/429), অটোমেটিক পরের মডেলে যাবে
+      }
+    } catch (error) {
+      lastError = error.message;
+      continue;
     }
-
-    const data = await response.json();
-    const aiReply = data?.candidates?.[0]?.content?.parts?.[0]?.text || "⚠️ বুঝতে পারিনি।";
-    
-    history.push({ role: "model", parts: [{ text: aiReply }] });
-    if (history.length > 20) history = history.slice(-20);
-    await env.CONTACT_KV.put(`${CONFIG.KV_HISTORY}${chatId}`, JSON.stringify(history), { expirationTtl: CONFIG.EXPIRATION_TTL });
-
-    return aiReply;
-  } catch (error) {
-    return `⚠️ System Error: ${error.message}`;
   }
+
+  return `⚠️ **Google AI Error (All fallback models failed):**\n\n${lastError}`;
 }
 
 export default {
@@ -178,7 +192,6 @@ export default {
 
           msgIds.push(msg.message_id);
           
-          // Bulk Delete
           if (msgIds.length > 0) {
             for (let i = 0; i < msgIds.length; i += 100) {
               const chunk = msgIds.slice(i, i + 100);
