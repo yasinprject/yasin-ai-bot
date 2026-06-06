@@ -35,7 +35,7 @@ async function trackMessages(env, chatId, newIds) {
 }
 
 // ==========================================
-// Gemini AI (অটো-পাইলট + লাইভ সার্চ)
+// Gemini AI (Natural ChatGPT/Gemini Persona)
 // ==========================================
 async function getGeminiResponse(env, chatId, userText, isOwner, userName) {
   if (!env.GEMINI_API_KEY) return "⚠️ API Key not found.";
@@ -43,17 +43,23 @@ async function getGeminiResponse(env, chatId, userText, isOwner, userName) {
   const apiKey = String(env.GEMINI_API_KEY).trim();
   const currentTime = new Date().toLocaleString('en-US', { timeZone: 'Asia/Dhaka', dateStyle: 'full', timeStyle: 'medium' });
 
-  const systemPrompt = `You are a highly intelligent and organized AI assistant connected to the live internet.
-  
-  CRITICAL KNOWLEDGE: Today is ${currentTime}. The year is 2026. DO NOT announce the date or time unless asked. Use your Google Search tool for current events (e.g., Bangladesh Interim Government led by Dr. Muhammad Yunus).
-  
-  Profile: ${isOwner ? 'You are talking DIRECTLY to your Owner, Yasin Adnan.' : `You are talking to a User named ${userName}. You are the official assistant of Yasin Adnan.`}
-  
-  RULES:
-  1. DO NOT use repetitive greetings (Do not say Assalamualaikum, Hello, Hi, etc.). Start answering directly to save time.
-  2. Answer perfectly in Bengali, but ALWAYS keep the specific names "Yasin Adnan", "Owner", and "User" in English.
-  3. Organize your answers beautifully with short paragraphs or bullet points.
-  4. If there is any important text, command, link, or code, ALWAYS put it inside backticks (\`text\`) so it becomes 1-click copyable.`;
+  // =========================================================
+  // এআই-এর নতুন ব্রেইন: একদম চ্যাটজিপিটি বা জেমিনির মতো আচরণ করবে
+  // =========================================================
+  const systemPrompt = `You are a state-of-the-art, highly intelligent, and professional AI assistant, identical in capability and conversational tone to ChatGPT or Google Gemini.
+
+  CRITICAL REAL-TIME CONTEXT: Today is ${currentTime}. The current year is 2026. Use your Google Search tool for current events (e.g., Bangladesh Interim Government led by Chief Adviser Dr. Muhammad Yunus). Do not state the date or time unless specifically asked.
+
+  USER PROFILE:
+  ${isOwner ? 
+    `You are talking DIRECTLY to your Owner and Creator, Yasin Adnan. Act as his personal, highly advanced AI assistant. Speak naturally, respectfully, and be highly productive.` : 
+    `You are the official AI assistant of Yasin Adnan, currently helping a guest user named ${userName}. Be polite, professional, and very helpful.`}
+
+  BEHAVIOR & FORMATTING RULES (CRITICAL):
+  1. Conversational & Natural: Talk naturally like a smart human assistant. Avoid sounding robotic, stiff, or overly formal. DO NOT use repetitive greetings (like saying "Hello" or "Assalamualaikum" in every response). Just jump straight into the helpful answer.
+  2. Language: Your primary language is fluent, standard, and natural Bengali (unless the user speaks English).
+  3. Beautiful Formatting: Organize your responses beautifully. Use short paragraphs, bullet points, and appropriate emojis to make the text easy to read.
+  4. 1-Click Copy: If you share any code, command, specific name, link, or important text that the user might want to copy, ALWAYS wrap it in single backticks (\`text\`) or triple backticks (\`\`\`code\`\`\`) for 1-click copying.`;
 
   let history = [];
   try {
@@ -70,9 +76,6 @@ async function getGeminiResponse(env, chatId, userText, isOwner, userName) {
     generationConfig: { temperature: 0.7 }
   });
 
-  // ========================================================
-  // অটো-পাইলট লজিক: একটি কাজ না করলে অটোমেটিক পরের মডেলে যাবে
-  // ========================================================
   const modelsToTry = [
     'gemini-flash-latest',
     'gemini-flash-lite-latest',
@@ -104,7 +107,7 @@ async function getGeminiResponse(env, chatId, userText, isOwner, userName) {
         }
       } else {
         lastError = await response.text();
-        continue; // মডেল কাজ না করলে (Error 404/429), অটোমেটিক পরের মডেলে যাবে
+        continue; 
       }
     } catch (error) {
       lastError = error.message;
@@ -212,7 +215,7 @@ export default {
 
           const welcomeMsg = isOwner
             ? `Hello **Owner** (Yasin Adnan)! 👋\n\nScreen completely cleared. Your Owner panel is active.`
-            : `Hello **User** (${displayName})! 👋\n\nScreen completely cleared. I am the official bot of Yasin Adnan.\nPlease select a mode below:`;
+            : `Hello **${displayName}**! 👋\n\nScreen completely cleared. I am the official bot of Yasin Adnan.\nPlease select a mode below:`;
 
           const sent = await ctxBot.reply(welcomeMsg, { parse_mode: 'Markdown', ...MAIN_MENU });
           await trackMessages(env, chatId, [sent.message_id]);
@@ -228,7 +231,7 @@ export default {
           
           const welcomeMsg = isOwner
             ? `Hello **Owner** (Yasin Adnan)! 👋\n\nYour Owner panel is active.`
-            : `Hello **User** (${displayName})! 👋\n\nI am the official bot of Yasin Adnan.\nPlease select a mode below:`;
+            : `Hello **${displayName}**! 👋\n\nI am the official bot of Yasin Adnan.\nPlease select a mode below:`;
 
           const sent = await ctxBot.reply(welcomeMsg, { parse_mode: 'Markdown', ...MAIN_MENU });
           await trackMessages(env, chatId, [sent.message_id]);
